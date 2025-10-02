@@ -87,7 +87,6 @@
         .building-name { font-weight: 700; margin-top: 5px; font-size: 1.1em; }
         .building-level { font-size: 0.9em; color: var(--text-secondary); }
         .building-timer { font-size: 0.9em; color: var(--secondary-accent); margin-top: 8px; font-weight: 700; }
-        .building-health-bar { position: absolute; bottom: 5px; left: 10%; width: 80%; height: 5px; background-color: #ef4444; border: 1px solid black; border-radius: 3px; }
         
         .progress-bar-container { background-color: var(--bg-secondary); border-radius: 5px; height: 10px; margin: 8px 0; overflow: hidden; }
         .progress-bar { height: 100%; border-radius: 5px; transition: width 0.5s ease; }
@@ -156,7 +155,7 @@
         .shop-item p, .troop-item p { margin: 2px 0; font-size: 0.9em; color: var(--text-secondary); }
 
         /* --- Attack View Specific --- */
-        #opponent-village-container { border: 2px dashed var(--primary-accent); padding: 15px; border-radius: 10px; margin-top: 20px; }
+        #opponent-village-container { border: 2px dashed var(--primary-accent); padding: 15px; border-radius: 10px; margin-top: 20px; position: relative; }
         .attack-troop-bar { display: flex; justify-content: center; gap: 15px; padding: 10px; background-color: rgba(0,0,0,0.3); border-radius: 8px; margin-top: 20px; }
         .attack-troop-card { cursor: pointer; padding: 10px; border-radius: 8px; border: 2px solid transparent; }
         .attack-troop-card.selected { border-color: var(--secondary-accent); background-color: var(--surface-color); }
@@ -164,8 +163,13 @@
         .attack-troop-icon { font-size: 2.5em; }
         .attack-troop-count { font-weight: 900; font-size: 1.2em; }
         .attack-village-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-        .attack-building-card { background-color: var(--surface-color); border-radius: 8px; text-align: center; aspect-ratio: 1/1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; }
-        .attack-troop-sprite { position: absolute; font-size: 1.5em; transition: all 0.2s linear; }
+        .attack-building-card { background-color: var(--surface-color); border-radius: 8px; text-align: center; aspect-ratio: 1/1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; transition: background-color 0.3s ease; }
+        .attack-building-card.destroyed { background-color: #555; opacity: 0.6; }
+        .building-health-bar { position: absolute; bottom: 5px; left: 10%; width: 80%; height: 5px; background-color: #ccc; border: 1px solid black; border-radius: 3px; }
+        .building-health-bar-inner { height: 100%; background-color: #4ade80; border-radius: 2px; transition: width 0.2s linear; }
+        .attack-troop-sprite { position: absolute; font-size: 1.5em; transition: all 0.2s linear; z-index: 10; pointer-events: none; }
+        #attack-timer { font-size: 1.5em; font-weight: 900; text-align: center; margin-bottom: 10px; }
+        #attack-damage-percent { font-size: 1.2em; font-weight: 700; text-align: center; }
 
     </style>
 </head>
@@ -223,8 +227,11 @@
                      <h3>Opponent: <span id="opponent-name"></span></h3>
                      <p>Trophies: <span id="opponent-trophies"></span> | Town Hall Lvl: <span id="opponent-th-level"></span></p>
                  </div>
+                 <div id="attack-stats" style="text-align:center; margin-bottom: 10px;">
+                    <div id="attack-timer">3:00</div>
+                    <div id="attack-damage-percent">Damage: 0%</div>
+                 </div>
                  <div id="opponent-village-container">
-                     <p style="text-align:center;">Deploy your troops!</p>
                      <div id="attack-village-grid" class="attack-village-grid"></div>
                  </div>
                  <div id="attack-troop-bar" class="attack-troop-bar"></div>
@@ -244,7 +251,6 @@
             <button id="back-to-village-btn" class="button secondary" style="margin-top: 20px;">Back to Village</button>
         </div>
     </template>
-
 
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
@@ -268,22 +274,25 @@
     const database = firebase.database();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
 
-    // --- 2. GAME DATA & SPECS ---
+    // --- 2. GAME DATA & SPECS (EXPANDED) ---
     const BUILDING_SPECS = {
-        'townHall':       { name: 'Town Hall', icon: '🏛️', costs: { 1: [0, 0, 0, 1000], 2: [1000, 0, 60, 2000], 3: [Infinity, Infinity, 0, 0] }, category: 'army' }, // costG, costE, time, health
-        'goldMine':       { name: 'Gold Mine', icon: '💰', costs: { 1: [100, 0, 10, 200, 500, 1000], 2: [250, 0, 20, 300, 1000, 2500], 3: [Infinity, Infinity, 0, 0, 0, 0] }, category: 'resources' }, // costG, costE, time, health, prod/hr, capacity
-        'elixirCollector':{ name: 'Elixir Collector', icon: '💧', costs: { 1: [0, 100, 10, 200, 500, 1000], 2: [0, 250, 20, 300, 1000, 2500], 3: [Infinity, Infinity, 0, 0, 0, 0] }, category: 'resources' },
-        'goldStorage':    { name: 'Gold Storage', icon: '📦', costs: { 1: [0, 200, 30, 400, 2500], 2: [0, 500, 60, 600, 10000], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'resources' }, // costG, costE, time, health, capacity
-        'elixirStorage':  { name: 'Elixir Storage', icon: '🛢️', costs: { 1: [200, 0, 30, 400, 2500], 2: [500, 0, 60, 600, 10000], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'resources' },
-        'barracks':       { name: 'Barracks', icon: '⚔️', costs: { 1: [0, 200, 30, 250], 2: [0, 500, 60, 350], 3: [Infinity, Infinity, 0, 0] }, category: 'army' },
-        'armyCamp':       { name: 'Army Camp', icon: '🏕️', costs: { 1: [0, 300, 45, 150, 20], 2: [0, 750, 90, 250, 30], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'army' }, // costG, costE, time, health, capacity
-        'cannon':         { name: 'Cannon', icon: '💣', costs: { 1: [250, 0, 25, 300, 9], 2: [600, 0, 50, 400, 12], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'defense' }, // costG, costE, time, health, dps
-        'builderHut':     { name: 'Builder\'s Hut', icon: '🛖', costs: { 1: [0,0,0,100] }, category: 'army' },
+        // [costG, costE, timeS, hp, arg5, arg6]
+        'townHall':       { name: 'Town Hall', icon: '🏛️', costs: { 1: [0, 0, 0, 1500], 2: [1000, 0, 60, 2000], 3: [Infinity, Infinity, 0, 0] }, category: 'army' },
+        'goldMine':       { name: 'Gold Mine', icon: '💰', costs: { 1: [100, 0, 10, 400, 500, 1000], 2: [250, 0, 20, 480, 1000, 2500], 3: [Infinity, Infinity, 0, 0, 0, 0] }, category: 'resources' }, // .., prod/hr, capacity
+        'elixirCollector':{ name: 'Elixir Collector', icon: '💧', costs: { 1: [0, 100, 10, 400, 500, 1000], 2: [0, 250, 20, 480, 1000, 2500], 3: [Infinity, Infinity, 0, 0, 0, 0] }, category: 'resources' },
+        'goldStorage':    { name: 'Gold Storage', icon: '📦', costs: { 1: [0, 200, 30, 800, 2500], 2: [0, 500, 60, 1000, 10000], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'resources' }, // .., capacity
+        'elixirStorage':  { name: 'Elixir Storage', icon: '🛢️', costs: { 1: [200, 0, 30, 800, 2500], 2: [500, 0, 60, 1000, 10000], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'resources' },
+        'barracks':       { name: 'Barracks', icon: '⚔️', costs: { 1: [0, 200, 30, 500], 2: [0, 500, 60, 600], 3: [Infinity, Infinity, 0, 0] }, category: 'army' },
+        'armyCamp':       { name: 'Army Camp', icon: '🏕️', costs: { 1: [0, 300, 45, 250, 20], 2: [0, 750, 90, 350, 30], 3: [Infinity, Infinity, 0, 0, 0] }, category: 'army' }, // .., capacity
+        'cannon':         { name: 'Cannon', icon: '💣', costs: { 1: [250, 0, 25, 650, 9, 7], 2: [600, 0, 50, 780, 12, 8], 3: [Infinity, Infinity, 0, 0, 0, 0] }, category: 'defense' }, // .., dps, range
+        'builderHut':     { name: 'Builder\'s Hut', icon: '🛖', costs: { 1: [0,0,0,250] }, category: 'army' },
     };
     
     const TROOP_SPECS = {
-        'barbarian': { name: 'Barbarian', icon: '💪', costs: { 1: [25, 5, 20, 45] }, housingSpace: 1 }, // costE, time, dps, health
-        'archer':    { name: 'Archer', icon: '🏹', costs: { 1: [50, 10, 15, 25] }, housingSpace: 1 },
+        // [costE, time, dps, hp, housing, targetPreference, range]
+        'barbarian': { name: 'Barbarian', icon: '💪', costs: { 1: [25, 5, 20, 90] }, housingSpace: 1, targetPreference: 'any', attackRange: 1, moveSpeed: 16 },
+        'archer':    { name: 'Archer', icon: '🏹', costs: { 1: [50, 10, 15, 45] }, housingSpace: 1, targetPreference: 'any', attackRange: 3.5, moveSpeed: 24 },
+        'giant':     { name: 'Giant', icon: '🗿', costs: { 1: [250, 30, 12, 300] }, housingSpace: 5, targetPreference: 'defense', attackRange: 1, moveSpeed: 12 }
     };
 
     // --- 3. STATE MANAGEMENT ---
@@ -292,6 +301,15 @@
     let localGameState = {}; 
     let playerRef = null;
     let gameLoopInterval = null;
+    let attackState = {
+        simulationInterval: null,
+        opponent: null,
+        deployedTroops: [],
+        villageBuildings: {},
+        totalBuildingHP: 0,
+        battleEnded: false
+    };
+
 
     // --- 4. UI COMPONENTS & RENDERING ---
     const loginScreen = document.getElementById('login-screen');
@@ -315,15 +333,18 @@
                     ${content}
                 </div>
             </div>`;
-        const backdrop = modalContainer.querySelector('.modal-backdrop');
-        backdrop.addEventListener('click', (e) => {
-            if (e.target === backdrop) closeModal();
-        });
     }
 
     function closeModal() {
-        modalContainer.innerHTML = '';
+        const backdrop = modalContainer.querySelector('.modal-backdrop');
+        if (backdrop) {
+            backdrop.style.animation = 'fadeOut 0.3s ease forwards';
+            backdrop.addEventListener('animationend', () => {
+                modalContainer.innerHTML = '';
+            });
+        }
     }
+
 
     function renderView(templateId) {
         const template = document.getElementById(templateId);
@@ -335,11 +356,9 @@
     function updateUI() {
         if (!playerState) return;
         
-        // Calculate capacities
         const capacities = calculateCapacities(playerState.buildings);
         const armySize = calculateArmySize(playerState.army);
 
-        // Update resources
         document.getElementById('gold-display').innerHTML = `Gold: ${Math.floor(playerState.resources.gold)} <span class="capacity">/ ${capacities.gold}</span>`;
         document.getElementById('elixir-display').innerHTML = `Elixir: ${Math.floor(playerState.resources.elixir)} <span class="capacity">/ ${capacities.elixir}</span>`;
         document.getElementById('trophies-display').textContent = `🏆 Trophies: ${playerState.trophies}`;
@@ -410,8 +429,8 @@
             displayName: user.displayName,
             trophies: 100,
             resources: { gold: 750, elixir: 750 },
-            army: { barbarian: 0, archer: 0 },
-            troopLevels: { barbarian: 1, archer: 1},
+            army: { barbarian: 5, archer: 5 },
+            troopLevels: { barbarian: 1, archer: 1, giant: 1 },
             trainingQueue: [],
             buildings: {
                 'b1': { type: 'townHall', level: 1, upgradeEndsAt: 0 },
@@ -422,6 +441,7 @@
                 'b6': { type: 'barracks', level: 1, upgradeEndsAt: 0 },
                 'b7': { type: 'armyCamp', level: 1, upgradeEndsAt: 0 },
                 'b8': { type: 'builderHut', level: 1, upgradeEndsAt: 0 },
+                'b9': { type: 'cannon', level: 1, upgradeEndsAt: 0 },
             }
         };
         playerRef.set(newPlayer);
@@ -433,7 +453,7 @@
             if (b.type === 'goldStorage') capacities.gold += BUILDING_SPECS.goldStorage.costs[b.level][4];
             if (b.type === 'elixirStorage') capacities.elixir += BUILDING_SPECS.elixirStorage.costs[b.level][4];
             if (b.type === 'armyCamp') capacities.army += BUILDING_SPECS.armyCamp.costs[b.level][4];
-            if (b.type === 'townHall') { // TH also stores some resources
+            if (b.type === 'townHall') { 
                 capacities.gold += 1000;
                 capacities.elixir += 1000;
             }
@@ -442,7 +462,9 @@
     }
 
     function calculateArmySize(army) {
-        return Object.entries(army || {}).reduce((sum, [type, count]) => sum + (TROOP_SPECS[type].housingSpace * count), 0);
+        return Object.entries(army || {}).reduce((sum, [type, count]) => {
+            return sum + ((TROOP_SPECS[type]?.housingSpace || 0) * count);
+        }, 0);
     }
 
     function getAvailableBuilders() {
@@ -476,7 +498,6 @@
             }
         });
         
-        // Process training queue
         if (playerState.trainingQueue && playerState.trainingQueue.length > 0) {
             const finishedTroops = playerState.trainingQueue.filter(troop => troop.finishesAt <= now);
             if(finishedTroops.length > 0) {
@@ -492,11 +513,9 @@
             }
         }
 
-
         if (shouldUpdateUI) {
-            // Full re-render will be triggered by firebase 'on.value'
         } else {
-             updateUI(); // Light re-render for local changes like resource generation
+             updateUI();
         }
     }
     
@@ -544,7 +563,6 @@
         }
 
         const [goldCost, elixirCost, time] = costs;
-
         const modalContent = `
             <h2>Upgrade ${spec.name} to Lvl ${nextLevel}</h2>
             <p>Current Level: ${building.level}</p>
@@ -553,8 +571,7 @@
             <div class="modal-actions">
                 <button id="confirm-upgrade-btn">Upgrade</button>
                 <button id="cancel-upgrade-btn" class="button secondary">Cancel</button>
-            </div>
-        `;
+            </div>`;
         renderModal(modalContent);
 
         document.getElementById('confirm-upgrade-btn').onclick = () => {
@@ -630,12 +647,11 @@
         }
     }
     
-    // --- 8. NEW FEATURES (SHOP, BARRACKS, ATTACK) ---
-
+    // --- 8. SHOP, BARRACKS ---
     function showShopModal() {
         let shopItemsHTML = '';
         Object.entries(BUILDING_SPECS).forEach(([type, spec]) => {
-            if(type === 'townHall' || type === 'builderHut') return; // Cannot build these
+            if(type === 'townHall' || type === 'builderHut') return;
             const costs = spec.costs[1];
             shopItemsHTML += `
                 <div class="shop-item">
@@ -643,39 +659,28 @@
                     <h3>${spec.name}</h3>
                     <p>💰 ${costs[0]} | 💧 ${costs[1]}</p>
                     <button class="button" onclick="handleBuildBuilding('${type}')">Build</button>
-                </div>
-            `;
+                </div>`;
         });
         const modalContent = `
             <h2>Shop</h2>
             <div class="shop-grid">${shopItemsHTML}</div>
-            <div class="modal-actions">
-                <button class="button secondary" onclick="closeModal()">Close</button>
-            </div>`;
+            <div class="modal-actions"><button class="button secondary" onclick="closeModal()">Close</button></div>`;
         renderModal(modalContent);
     }
 
     function handleBuildBuilding(buildingType) {
-        if (getAvailableBuilders() < 1) {
-            return showNotification("No available builders!", "error");
-        }
+        if (getAvailableBuilders() < 1) { return showNotification("No available builders!", "error"); }
         const spec = BUILDING_SPECS[buildingType];
-        const costs = spec.costs[1];
-        const [goldCost, elixirCost, time] = costs;
+        const [goldCost, elixirCost, time] = spec.costs[1];
 
         if (playerState.resources.gold >= goldCost && playerState.resources.elixir >= elixirCost) {
-            const newBuildingId = `b${Date.now()}`; // Simple unique ID
-            const newBuilding = {
-                type: buildingType,
-                level: 1,
-                upgradeEndsAt: Date.now() + time * 1000
+            const newBuildingId = `b${Date.now()}`;
+            const newBuilding = { type: buildingType, level: 1, upgradeEndsAt: Date.now() + time * 1000 };
+            const updates = {
+                'resources/gold': firebase.database.ServerValue.increment(-goldCost),
+                'resources/elixir': firebase.database.ServerValue.increment(-elixirCost),
+                [`buildings/${newBuildingId}`]: newBuilding
             };
-            
-            const updates = {};
-            updates['resources/gold'] = firebase.database.ServerValue.increment(-goldCost);
-            updates['resources/elixir'] = firebase.database.ServerValue.increment(-elixirCost);
-            updates[`buildings/${newBuildingId}`] = newBuilding;
-            
             playerRef.update(updates);
             showNotification(`Started building ${spec.name}!`, 'success');
             closeModal();
@@ -698,53 +703,40 @@
                     <h3>${spec.name}</h3>
                     <p>💧 ${costs[0]} | ⏰ ${costs[1]}s</p>
                     <button class="button" onclick="handleTrainTroop('${type}')" ${currentArmySize >= armyCapacity ? 'disabled' : ''}>Train</button>
-                </div>
-            `;
+                </div>`;
         });
         const modalContent = `
             <h2>Train Troops</h2>
             <p>Army Space: ${currentArmySize} / ${armyCapacity}</p>
             <div class="barracks-grid">${troopItemsHTML}</div>
-            <div class="modal-actions">
-                <button class="button secondary" onclick="closeModal()">Close</button>
-            </div>`;
+            <div class="modal-actions"><button class="button secondary" onclick="closeModal()">Close</button></div>`;
         renderModal(modalContent);
     }
     
     function handleTrainTroop(troopType) {
         const spec = TROOP_SPECS[troopType];
-        const level = playerState.troopLevels[troopType] || 1;
-        const [costElixir, time] = spec.costs[level];
-        
+        const [costElixir, time] = spec.costs[1];
         const armyCapacity = calculateCapacities(playerState.buildings).army;
         const currentArmySize = calculateArmySize(playerState.army);
         const queueSize = (playerState.trainingQueue || []).reduce((sum, t) => sum + TROOP_SPECS[t.type].housingSpace, 0);
 
-        if (currentArmySize + queueSize + spec.housingSpace > armyCapacity) {
-            return showNotification("Army camps are full!", "error");
-        }
-        if (playerState.resources.elixir < costElixir) {
-            return showNotification("Not enough elixir!", "error");
-        }
+        if (currentArmySize + queueSize + spec.housingSpace > armyCapacity) { return showNotification("Army camps are full!", "error"); }
+        if (playerState.resources.elixir < costElixir) { return showNotification("Not enough elixir!", "error"); }
         
         const lastTroop = (playerState.trainingQueue || []).slice(-1)[0];
         const startTime = lastTroop ? lastTroop.finishesAt : Date.now();
-        
-        const newTroop = {
-            type: troopType,
-            finishesAt: startTime + time * 1000
+        const newTroop = { type: troopType, finishesAt: startTime + time * 1000 };
+        const updates = {
+            'resources/elixir': firebase.database.ServerValue.increment(-costElixir),
+            'trainingQueue': [...(playerState.trainingQueue || []), newTroop]
         };
-        
-        const updates = {};
-        updates['resources/elixir'] = firebase.database.ServerValue.increment(-costElixir);
-        updates['trainingQueue'] = [...(playerState.trainingQueue || []), newTroop];
-        
         playerRef.update(updates);
         showNotification(`Training ${spec.name}...`, 'info');
         closeModal();
-        showBarracksModal(); // Re-open to show updated state
+        showBarracksModal();
     }
     
+    // --- 9. ATTACK SIMULATION ENGINE (NEW/OVERHAULED) ---
     async function findOpponent() {
         const snapshot = await database.ref('players').once('value');
         if (!snapshot.exists()) return showNotification("No opponents found!", "error");
@@ -758,7 +750,7 @@
         const currentOpponent = opponents[Math.floor(Math.random() * opponents.length)];
         startAttack(currentOpponent);
     }
-    
+
     function startAttack(opponent) {
         document.getElementById('find-opponent-btn').classList.add('hidden');
         document.getElementById('attack-view').classList.remove('hidden');
@@ -771,11 +763,24 @@
         const troopBar = document.getElementById('attack-troop-bar');
         grid.innerHTML = '';
         troopBar.innerHTML = '';
+
+        // Reset attack state
+        attackState = {
+            simulationInterval: null,
+            opponent: opponent,
+            attacker: playerState,
+            deployedTroops: [],
+            villageBuildings: {},
+            totalBuildingHP: 0,
+            initialTotalBuildingCount: 0,
+            battleEnded: false,
+            startTime: Date.now(),
+            battleTimeLimit: 90000 // 90 seconds
+        };
         
         let attackerArmy = JSON.parse(JSON.stringify(playerState.army));
         let selectedTroop = null;
 
-        // Render troop selection bar
         Object.entries(attackerArmy).forEach(([type, count]) => {
             if (count > 0) {
                 const troopSpec = TROOP_SPECS[type];
@@ -792,23 +797,49 @@
             }
         });
 
-        // Render opponent's village
+        // Initialize village buildings for the simulation
         Object.entries(opponent.buildings).forEach(([id, building]) => {
+            const spec = BUILDING_SPECS[building.type];
+            const maxHp = spec.costs[building.level][3];
+            attackState.villageBuildings[id] = {
+                id: id,
+                ...building,
+                hp: maxHp,
+                maxHp: maxHp,
+                isDestroyed: false,
+                category: spec.category,
+                dps: spec.category === 'defense' ? spec.costs[building.level][4] : 0,
+                range: spec.category === 'defense' ? spec.costs[building.level][5] : 0,
+                target: null, // For defenses
+                domElement: null
+            };
+            attackState.totalBuildingHP += maxHp;
+            attackState.initialTotalBuildingCount++;
+        });
+        
+        // Render opponent's village
+        Object.entries(attackState.villageBuildings).forEach(([id, building]) => {
             const spec = BUILDING_SPECS[building.type];
             const card = document.createElement('div');
             card.className = 'attack-building-card';
             card.dataset.id = id;
-            card.innerHTML = `<div class="building-icon">${spec.icon}</div><div class="building-level">${building.level}</div><div class="building-health-bar"></div>`;
+            card.innerHTML = `
+                <div class="building-icon">${spec.icon}</div>
+                <div class="building-level">${building.level}</div>
+                <div class="building-health-bar">
+                    <div class="building-health-bar-inner" style="width: 100%;"></div>
+                </div>`;
             grid.appendChild(card);
+            attackState.villageBuildings[id].domElement = card;
         });
+        
+        document.getElementById('end-attack-btn').onclick = () => endAttack(false);
 
-        // Add deployment listener
         grid.addEventListener('click', (e) => {
             if (selectedTroop && attackerArmy[selectedTroop] > 0) {
                 attackerArmy[selectedTroop]--;
                 document.querySelector(`.attack-troop-card[data-troop-type="${selectedTroop}"] .attack-troop-count`).textContent = attackerArmy[selectedTroop];
                 
-                // Add troop sprite to grid
                 const rect = grid.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
@@ -819,10 +850,24 @@
                 sprite.style.left = `${x}px`;
                 sprite.style.top = `${y}px`;
                 grid.appendChild(sprite);
-                
-                // Animate deployment
-                sprite.animate([{ transform: 'scale(1.5)', opacity: 0.5 }, { transform: 'scale(1)', opacity: 1 }], { duration: 300 });
 
+                const spec = TROOP_SPECS[selectedTroop];
+                const troopId = `t${Date.now()}${Math.random()}`;
+                attackState.deployedTroops.push({
+                    id: troopId,
+                    type: selectedTroop,
+                    hp: spec.costs[1][3], // health
+                    maxHp: spec.costs[1][3],
+                    dps: spec.costs[1][2],
+                    targetPreference: spec.targetPreference,
+                    attackRange: spec.attackRange * 20, // Scale range for pixels
+                    moveSpeed: spec.moveSpeed,
+                    x: x, y: y,
+                    target: null,
+                    isAttacking: false,
+                    domElement: sprite
+                });
+                
                 if (attackerArmy[selectedTroop] === 0) {
                     document.querySelector(`.attack-troop-card[data-troop-type="${selectedTroop}"]`).style.display = 'none';
                     selectedTroop = null;
@@ -831,15 +876,188 @@
         });
 
         showNotification("Battle Started! Deploy your troops.", "info");
-        // In a real game, a full battle simulation would start here.
-        // For this example, we'll keep it illustrative. We'll add a simplified simulation below.
-        // This is a placeholder for a more complex engine.
-        setTimeout(() => {
-            showNotification("Battle Ended!", "success");
-            renderView('village-template');
-        }, 15000); // Auto-end battle after 15s
+        attackState.simulationInterval = setInterval(runAttackSimulation, 100); // 10 ticks per second
     }
 
+    function runAttackSimulation() {
+        if (attackState.battleEnded) return;
+
+        const tickDuration = 0.1; // 100ms
+        const now = Date.now();
+
+        // --- BATTLE TIMER AND END CONDITIONS ---
+        const elapsedTime = now - attackState.startTime;
+        const remainingTime = Math.max(0, attackState.battleTimeLimit - elapsedTime);
+        const minutes = Math.floor(remainingTime / 60000);
+        const seconds = Math.floor((remainingTime % 60000) / 1000).toString().padStart(2, '0');
+        document.getElementById('attack-timer').textContent = `${minutes}:${seconds}`;
+
+        const livingBuildings = Object.values(attackState.villageBuildings).filter(b => !b.isDestroyed);
+        const livingTroops = attackState.deployedTroops.filter(t => t.hp > 0);
+
+        if (remainingTime <= 0 || livingTroops.length === 0 || livingBuildings.length === 0) {
+            endAttack(livingTroops.length > 0);
+            return;
+        }
+
+        // --- DEFENSE AI ---
+        Object.values(attackState.villageBuildings).filter(b => b.category === 'defense' && !b.isDestroyed).forEach(defense => {
+            if (!defense.target || defense.target.hp <= 0) {
+                defense.target = findClosestTarget(defense, livingTroops, 'any');
+            }
+            if (defense.target) {
+                const dist = getDistance(defense.domElement, defense.target.domElement);
+                if (dist <= defense.range * 20) { // Scale range for pixels
+                    defense.target.hp -= defense.dps * tickDuration;
+                } else {
+                    defense.target = null; // Target out of range
+                }
+            }
+        });
+
+        // --- TROOP AI & MOVEMENT & ATTACK ---
+        livingTroops.forEach(troop => {
+            // 1. Find Target if needed
+            if (!troop.target || troop.target.isDestroyed) {
+                troop.target = findClosestTarget(troop, livingBuildings, troop.targetPreference);
+                troop.isAttacking = false;
+            }
+
+            if (troop.target) {
+                const targetBuilding = troop.target;
+                const dist = getDistance(troop.domElement, targetBuilding.domElement);
+
+                // 2. Move or Attack
+                if (dist <= troop.attackRange) {
+                    troop.isAttacking = true;
+                    targetBuilding.hp -= troop.dps * tickDuration;
+                } else {
+                    troop.isAttacking = false;
+                    // Move towards target
+                    const angle = Math.atan2(
+                        targetBuilding.domElement.offsetTop - troop.y,
+                        targetBuilding.domElement.offsetLeft - troop.x
+                    );
+                    troop.x += Math.cos(angle) * (troop.moveSpeed * tickDuration);
+                    troop.y += Math.sin(angle) * (troop.moveSpeed * tickDuration);
+                    troop.domElement.style.left = `${troop.x}px`;
+                    troop.domElement.style.top = `${troop.y}px`;
+                }
+            }
+        });
+
+        // --- UPDATE UI & STATE ---
+        let currentTotalHP = 0;
+        Object.values(attackState.villageBuildings).forEach(b => {
+            if (!b.isDestroyed) {
+                if (b.hp <= 0) {
+                    b.isDestroyed = true;
+                    b.domElement.classList.add('destroyed');
+                } else {
+                    currentTotalHP += b.hp;
+                    const healthPercent = (b.hp / b.maxHp) * 100;
+                    b.domElement.querySelector('.building-health-bar-inner').style.width = `${healthPercent}%`;
+                }
+            }
+        });
+
+        attackState.deployedTroops = livingTroops;
+        attackState.deployedTroops.forEach(t => {
+            if (t.hp <= 0) t.domElement.remove();
+        });
+
+        const damagePercent = Math.floor(((attackState.totalBuildingHP - currentTotalHP) / attackState.totalBuildingHP) * 100);
+        document.getElementById('attack-damage-percent').textContent = `Damage: ${damagePercent}%`;
+    }
+
+    function endAttack(attackerWon) {
+        if (attackState.battleEnded) return;
+        attackState.battleEnded = true;
+        clearInterval(attackState.simulationInterval);
+        
+        let currentTotalHP = 0;
+        let destroyedBuildingCount = 0;
+        Object.values(attackState.villageBuildings).forEach(b => {
+             if (b.isDestroyed) destroyedBuildingCount++;
+             else currentTotalHP += b.hp;
+        });
+
+        const damagePercent = Math.floor(((attackState.totalBuildingHP - currentTotalHP) / attackState.totalBuildingHP) * 100);
+        
+        // Calculate loot
+        const lootableGold = (attackState.opponent.resources.gold || 0) * 0.2;
+        const lootableElixir = (attackState.opponent.resources.elixir || 0) * 0.2;
+        const goldLooted = Math.floor(lootableGold * (damagePercent / 100));
+        const elixirLooted = Math.floor(lootableElixir * (damagePercent / 100));
+
+        // Calculate trophies
+        let trophyChange = 0;
+        if (damagePercent >= 50) {
+            trophyChange = 10 + Math.floor(damagePercent / 10);
+        } else if (damagePercent > 0) {
+            trophyChange = -15 + Math.floor(damagePercent / 5);
+        } else {
+            trophyChange = -20;
+        }
+
+        const modalContent = `
+            <h2>Battle Over!</h2>
+            <p>Damage: ${damagePercent}%</p>
+            <p>Looted: 💰 ${goldLooted} Gold, 💧 ${elixirLooted} Elixir</p>
+            <p>Trophies: <span style="color: ${trophyChange >= 0 ? 'var(--success-color)' : 'var(--error-color)'}">${trophyChange > 0 ? '+' : ''}${trophyChange}</span></p>
+            <div class="modal-actions">
+                <button id="return-to-village-btn">Return to Village</button>
+            </div>`;
+        renderModal(modalContent);
+
+        document.getElementById('return-to-village-btn').onclick = () => {
+             closeModal();
+             renderView('village-template');
+        };
+
+        // Update database
+        const attackerUpdates = {
+            'trophies': firebase.database.ServerValue.increment(trophyChange),
+            'resources/gold': firebase.database.ServerValue.increment(goldLooted),
+            'resources/elixir': firebase.database.ServerValue.increment(elixirLooted),
+            'army': {} // Clear army used in attack
+        };
+        playerRef.update(attackerUpdates);
+        
+        const opponentRef = database.ref(`players/${attackState.opponent.key}`);
+        const opponentUpdates = {
+            'trophies': firebase.database.ServerValue.increment(-trophyChange),
+            'resources/gold': firebase.database.ServerValue.increment(-goldLooted),
+            'resources/elixir': firebase.database.ServerValue.increment(-elixirLooted)
+        };
+        opponentRef.update(opponentUpdates);
+    }
+    
+    // --- UTILITY FUNCTIONS ---
+    function findClosestTarget(source, targets, preference) {
+        let closestTarget = null;
+        let minDistance = Infinity;
+        
+        const preferredTargets = preference === 'any' ? targets : targets.filter(t => t.category === preference);
+        const potentialTargets = preferredTargets.length > 0 ? preferredTargets : targets;
+        
+        potentialTargets.forEach(target => {
+            const dist = getDistance(source.domElement || source, target.domElement);
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestTarget = target;
+            }
+        });
+        return closestTarget;
+    }
+
+    function getDistance(elem1, elem2) {
+        const rect1 = elem1.getBoundingClientRect();
+        const rect2 = elem2.getBoundingClientRect();
+        const dx = (rect1.left + rect1.width / 2) - (rect2.left + rect2.width / 2);
+        const dy = (rect1.top + rect1.height / 2) - (rect2.top + rect2.height / 2);
+        return Math.sqrt(dx * dx + dy * dy);
+    }
 
     async function showLeaderboard() {
         renderView('leaderboard-template');
@@ -854,7 +1072,11 @@
             snapshot.forEach(child => { players.push(child.val()) });
             players.reverse(); 
             leaderboardBody.innerHTML = players.map((p, i) => `
-                <tr style="${p.uid === currentUser.uid ? 'background-color: var(--primary-accent); color: var(--bg-primary);' : ''}"><td>${i + 1}</td><td>${p.displayName}</td><td>${p.trophies}</td></tr>
+                <tr style="${p.uid === currentUser.uid ? 'background-color: var(--primary-accent); color: var(--bg-primary);' : ''}">
+                    <td style="padding: 8px;">${i + 1}</td>
+                    <td style="padding: 8px;">${p.displayName}</td>
+                    <td style="padding: 8px;">${p.trophies}</td>
+                </tr>
             `).join('');
         } else {
              leaderboardBody.innerHTML = '<tr><td colspan="3">No players found.</td></tr>';
